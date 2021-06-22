@@ -5,11 +5,11 @@ SRC=$(realpath "${BASH_SOURCE[0]}")
 DIR="$(dirname "$SRC")"
 
 # Assign inputs to variables
-authEmail=$(grep --perl-regexp --only-matching '"Auth Email":\s*?"\K[^"\s]*' "api.config")
-authKey=$(grep --perl-regexp --only-matching '"Auth Key":\s*?"\K[^"\s]*' "api.config")
-accountID=$(grep --perl-regexp --only-matching '"Account ID":\s*?"\K[^"\s]*' "api.config")
-parentDomain=$(grep --perl-regexp --only-matching '"Parent Domain":\s*?"\K[^"\s]*' "api.config")
-parentDNSEnable=$(grep --perl-regexp --only-matching '"Parent DNS Enabled":\s*?"\K[^"\s]*' "api.config")
+authEmail=$(grep --perl-regexp --only-matching '"Auth Email":\s*?"\K[^"\s]*' "$DIR/api.config")
+authKey=$(grep --perl-regexp --only-matching '"Auth Key":\s*?"\K[^"\s]*' "$DIR/api.config")
+accountID=$(grep --perl-regexp --only-matching '"Account ID":\s*?"\K[^"\s]*' "$DIR/api.config")
+parentDomain=$(grep --perl-regexp --only-matching '"Parent Domain":\s*?"\K[^"\s]*' "$DIR/api.config")
+parentDNSEnable=$(grep --perl-regexp --only-matching '"Parent DNS Enabled":\s*?"\K[^"\s]*' "$DIR/api.config")
 
 function getZoneID {
     # getZoneID takes a domain name and finds the domain ID for it.
@@ -31,11 +31,6 @@ function onboardZone {
 # Onboard Zone functions. Called from "onboardZone".
 function createSubdomain {
     getZoneID $parentDomain
-    # parentzoneID=$(curl -X GET "https://api.cloudflare.com/client/v4/zones?name=$parentDomain&account.id=$accountID"\
-    #     -H "X-Auth-Email: $authEmail"\
-    #     -H "X-Auth-Key: $authKey"\
-    #     -H "Content-Type: application/json"\
-    #     | grep --perl-regexp --only-matching '(?<="id":")[^"]*' | head -1) 
     subdomainName=$(echo "$1" | sed 's/\.//')
     curl -X POST "https://api.cloudflare.com/client/v4/zones/$zoneID/dns_records"\
         -H "X-Auth-Email: $authEmail"\
@@ -88,6 +83,7 @@ function setZone {
     fi
     echo -e "\nZone $1 set complete. Check JSON output for errors."
 }
+
 # A la carte functions. Run as needed.
 ## devMode disables the cache and automatically turns off after 3 hours. Example: "devMode example.com"
 function devModeOn {
