@@ -1,7 +1,7 @@
 # About
-Simplifies Cloudfare's API into callable functions for common commands like creating domain zones, setting DNS and editing zone properties.
+Simplifies Cloudflare's API into callable functions for common commands like creating domain zones, setting DNS and editing zone properties.
 # Instructions
-1. Add credentials from Cloudfare's API to "api.config" using favorite text editor and save.
+1. Add credentials from Cloudflare's API to "api.config" using favorite text editor and save.
 2. Run the following to set up a domain. 
     $ source cfapi.sh;onboardDomain example.com
 3. Call other functions from this file as needed using the same format.
