@@ -22,16 +22,17 @@ function getZoneID {
 function onboardZone {
     # onboardZone runs most functions below to setup a new zone and optionally create a subdomain.
     if [ "$parentDNSEnable" = "true" ];then
-        createSubdomain $1
+        createSubdomain "$1"
         echo -e "\nCreateSubdomain $1 finished. Check JSON output for errors."
     fi
-    domainOutput=$(createZone $1 | grep --perl-regexp --only-matching '(?<="id":")[^"]*' | head -1)
-    setZone $1
+    # domainOutput=$(createZone "$1" | grep --perl-regexp --only-matching '(?<="id":")[^"]*' | head -1)
+    createZone "$1" | grep --perl-regexp --only-matching '(?<="id":")[^"]*' | head -1
+    setZone "$1"
 }
 # Onboard Zone functions. Called from "onboardZone".
 function createSubdomain {
-    getZoneID $parentDomain
-    subdomainName=$(echo "$1" | sed 's/\.//')
+    getZoneID "$parentDomain"
+    subdomainName="${1//./}" # Removes '.'
     curl -X POST "https://api.cloudflare.com/client/v4/zones/$zoneID/dns_records"\
         -H "X-Auth-Email: $authEmail"\
         -H "X-Auth-Key: $authKey"\
@@ -51,7 +52,7 @@ function createZone {
 }
 function setZone {
     # Configures zone $1 with common settings, like always use HTTPS. Example: "setZone example.com" creates example.com
-    getZoneID $1
+    getZoneID "$1"
     #Note: Below automatic Wordpress platform optimization requires cloudfare paid subscription and cloudfare plugin
     # curl -X PATCH "https://api.cloudflare.com/client/v4/zones/$zoneID/settings/automatic_platform_optimization" \
     #     -H "X-Auth-Email: $authEmail" \
@@ -87,7 +88,7 @@ function setZone {
 # A la carte functions. Run as needed.
 ## devMode disables the cache and automatically turns off after 3 hours. Example: "devMode example.com"
 function devModeOn {
-    getZoneID $1
+    getZoneID "$1"
     curl -X PATCH "https://api.cloudflare.com/client/v4/zones/$zoneID/settings/development_mode" \
      -H "X-Auth-Email: $authEmail" \
      -H "X-Auth-Key: $authKey" \
@@ -96,7 +97,7 @@ function devModeOn {
     echo -e "\ndevModOn finished for $1"
 }
 function devModeOff {
-    getZoneID $1
+    getZoneID "$1"
     curl -X PATCH "https://api.cloudflare.com/client/v4/zones/$1/settings/development_mode" \
      -H "X-Auth-Email: $authEmail" \
      -H "X-Auth-Key: $authKey" \
@@ -106,7 +107,7 @@ function devModeOff {
 }
 ## deleteZone deletes the specified zone. Example: "deleteZone example.com"
 function deleteZone {
-    getZoneID $1
+    getZoneID "$1"
     echo -e "\nDeleting $1 with ID $zoneID"
     curl -X DELETE "https://api.cloudflare.com/client/v4/zones/$zoneID"\
         -H "X-Auth-Email: $authEmail"\
