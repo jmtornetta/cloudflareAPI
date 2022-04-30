@@ -1,13 +1,15 @@
 # About
-Simplifies Cloudflare's API into callable functions for common commands like creating domain zones, setting DNS and editing zone properties.
+A library of functions which use Cloudflare's API to speed up DNS onboarding and management. Create zones, set DNS records, and edit properties from your terminal or program.  
 # Instructions
-1. Add credentials from Cloudflare's API to "api.config" using favorite text editor and save.
-2. Run the following to set up a domain. 
-    $ source cfapi.sh;onboardDomain example.com
-3. Call other functions from this file as needed using the same format.
-    $ source cfapi.sh;deleteDomain example.com
-# Misc
-Parent Domain works by creating a CNAME subdomain record on parent domain and then mapping the subdomain to the parent domain via CNAME flattening.
+1. Add credentials from Cloudflare's API to "api.config" save. Acquire from "https://dash.cloudflare.com/profile/api-tokens".
+2. Call the script with a function as the first argument. Examples:
+    `./cfapi.sh onboardZone "example.com"`  
+    `./cfapi.sh deleteDomain "example.com"`  
+## Config > Parent Domain
+Specify a Cloudflare domain name here ("parent-example.com") to have any new domain ("child-example.com") utilize the same endpoint as the parent.
+1. A CNAME record pointing to the parent will be created on the new domain. This uses CNAME flattening via Cloudlfare so an 'A record' is never needed.  
+2. A concatenated CNAME record will be created on the parent domain to represent the child domain ("child-examplecom"). This can be deleted if not needed.  
+Leave blank if not using a parent domain.
 <table>
     <tr>
         <th>Type</th>
