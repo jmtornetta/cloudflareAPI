@@ -1,8 +1,9 @@
 # About
 A library of functions which use Cloudflare's API to speed up DNS onboarding and management. Create zones, set DNS records, and edit properties from your terminal or program.  
 # Instructions
-1. Add credentials from Cloudflare's API to "api.config" save. Acquire from "https://dash.cloudflare.com/profile/api-tokens".
-2. Call the script with a function as the first argument. Examples:  
+1. Copy "api.default.config" to "api.config"  
+2. Add credentials from Cloudflare's API to "api.config" and save. Acquire from "https://dash.cloudflare.com/profile/api-tokens".
+3. Call the script with a function as the first argument. Examples:  
 ```./cfapi.sh onboard_zone "example.com"```   
 ```./cfapi.sh delete_zone "example.com"```  
 ## Config > Parent Domain
