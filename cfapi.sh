@@ -93,7 +93,7 @@ start() {
                 -H "X-Auth-Key: $authKey" \
                 -H "Content-Type: application/json" \
                 --data "{\"type\":\"CNAME\",\"name\":\"$_subdomainName\",\"content\":\"$_parentDomain\",\"ttl\":120,\"proxied\":true}" \
-                | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find the id of the zone
+                | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find success status from json response
 
             if [ "$_success" == true ]; then
                 msg "Parent zone '$_parentDomain' contains CNAME '$_subdomainName'."
@@ -114,7 +114,7 @@ start() {
                 -H "X-Auth-Key: $authKey" \
                 -H "Content-Type: application/json" \
                 --data "{\"name\":\"$_domain\",\"account\":{\"id\":\"$accountID\"},\"jump_start\":true,\"type\":\"full\"}" \
-                | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find the id of the zone
+                | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find success status from json response
             if [ "$_success" == true ]; then
                 msg "Zone '$_domain' created."
             else 
@@ -138,14 +138,14 @@ start() {
             #     -H "X-Auth-Key: $authKey" \
             #     -H "Content-Type: application/json" \
             #     --data "{\"value\":{\"enabled\":true,\"cf\":true,\"wordpress\":true,\"wp_plugin\":false,\"hostnames\":[\"www.$1\",\"$1],\"cache_by_device_type\":false}}"
+            
             # Use full SSL
-
             _success=$(curl --silent -X PATCH "https://api.cloudflare.com/client/v4/zones/$_zoneID/settings/ssl" \
                 -H "X-Auth-Email: $authEmail" \
                 -H "X-Auth-Key: $authKey" \
                 -H "Content-Type: application/json" \
                 --data '{"value":"full"}' \
-                | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find the id of the zone
+                | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find success status from json response
 
             if [ "$_success" == true ]; then
                 msg "Success. Set full SSL."
@@ -159,7 +159,7 @@ start() {
                 -H "X-Auth-Key: $authKey"\
                 -H "Content-Type: application/json"\
                 --data '{"value":"on"}' \
-                | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find the id of the zone
+                | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find success status from json response
 
             if [ "$_success" == true ]; then
                 msg "Success. Set always HTTPS."
@@ -173,7 +173,7 @@ start() {
                 -H "X-Auth-Key: $authKey"\
                 -H "Content-Type: application/json"\
                 --data '{"value":"on"}' \
-                | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find the id of the zone
+                | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find success status from json response
 
             if [ "$_success" == true ]; then
                 msg "Success. Set Brotli compression."
@@ -188,7 +188,7 @@ start() {
                     -H "X-Auth-Key: $authKey"\
                     -H "Content-Type: application/json"\
                     --data "{\"type\":\"CNAME\",\"name\":\"@\",\"content\":\"$_parentDomain\",\"ttl\":120,\"proxied\":true}" \
-                    | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find the id of the zone
+                    | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find success status from json response
 
                 if [ "$_success" == true ]; then
                     msg "Success. Zone '$_domain' contains CNAME pointing to '$_parentDomain'."
@@ -212,7 +212,7 @@ start() {
                 -H "X-Auth-Key: $authKey" \
                 -H "Content-Type: application/json" \
                 --data '{"value":"on"}' \
-                | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find the id of the zone
+                | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find success status from json response
 
             if [ "$_success" == true ]; then
                 msg "Dev Mode is ON for '$_domain'."
@@ -233,7 +233,7 @@ start() {
             -H "X-Auth-Key: $authKey" \
             -H "Content-Type: application/json" \
             --data '{"value":"off"}' \
-            | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find the id of the zone
+            | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find success status from json response
 
             if [ "$_success" == true ]; then
                 msg "Dev Mode is OFF for '$_domain'."
@@ -253,7 +253,7 @@ start() {
                 -H "X-Auth-Email: $authEmail"\
                 -H "X-Auth-Key: $authKey"\
                 -H "Content-Type: application/json" \
-                | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find the id of the zone
+                | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find success status from json response
 
             if [ "$_success" == true ]; then
                 msg "Zone '$_domain' deleted."
