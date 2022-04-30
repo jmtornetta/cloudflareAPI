@@ -3,8 +3,8 @@ A library of functions which use Cloudflare's API to speed up DNS onboarding and
 # Instructions
 1. Add credentials from Cloudflare's API to "api.config" save. Acquire from "https://dash.cloudflare.com/profile/api-tokens".
 2. Call the script with a function as the first argument. Examples:  
-    ```./cfapi.sh onboard_zone "example.com"```
-    ```./cfapi.sh delete_zone "example.com"```  
+```./cfapi.sh onboard_zone "example.com"```   
+```./cfapi.sh delete_zone "example.com"```  
 ## Config > Parent Domain
 Specify a Cloudflare domain name here ("parent-example.com") to have any new domain ("child-example.com") utilize the same endpoint as the parent.
 1. A CNAME record pointing to the parent will be created on the new domain. This uses CNAME flattening via Cloudlfare so an 'A record' is never needed.  
