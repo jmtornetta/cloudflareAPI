@@ -86,18 +86,21 @@ start() {
             declare -r _subdomainName="${1//./}" # Removes '.' from domain name.
             declare -r _parentDomain="${2:-$parentDomain}" # Use domain defined in config as default if not provided as argument.
             declare -r _zoneID=$(get_zoneId "$_parentDomain") # Runs above function and assigns parent zone ID to new internal variable.
+            
+            declare _response
             declare _success
 
-            _success=$(curl --silent -X POST "https://api.cloudflare.com/client/v4/zones/$_zoneID/dns_records" \
+            _response=$(curl --silent -X POST "https://api.cloudflare.com/client/v4/zones/$_zoneID/dns_records" \
                 -H "X-Auth-Email: $authEmail" \
                 -H "X-Auth-Key: $authKey" \
                 -H "Content-Type: application/json" \
-                --data "{\"type\":\"CNAME\",\"name\":\"$_subdomainName\",\"content\":\"$_parentDomain\",\"ttl\":120,\"proxied\":true}" \
-                | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find success status from json response
+                --data "{\"type\":\"CNAME\",\"name\":\"$_subdomainName\",\"content\":\"$_parentDomain\",\"ttl\":120,\"proxied\":true}")
+            _success=$(echo "$_response" | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find success status from json response
 
             if [ "$_success" == true ]; then
                 msg "Parent zone '$_parentDomain' contains CNAME '$_subdomainName'."
             else 
+                msg "$_response"
                 die "Subdomain creation failed."
             fi 
         }
@@ -107,17 +110,21 @@ start() {
             # Example: "create_zone example.com" creates example.com
             
             declare -r _domain="${1}"
+
+            declare _response
             declare _success
             
-            _success=$(curl --silent -X POST "https://api.cloudflare.com/client/v4/zones" \
+            _response=$(curl --silent -X POST "https://api.cloudflare.com/client/v4/zones" \
                 -H "X-Auth-Email: $authEmail" \
                 -H "X-Auth-Key: $authKey" \
                 -H "Content-Type: application/json" \
-                --data "{\"name\":\"$_domain\",\"account\":{\"id\":\"$accountID\"},\"jump_start\":true,\"type\":\"full\"}" \
-                | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find success status from json response
+                --data "{\"name\":\"$_domain\",\"account\":{\"id\":\"$accountID\"},\"jump_start\":true,\"type\":\"full\"}")
+            _success=$(echo "$_response" | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find success status from json response
+
             if [ "$_success" == true ]; then
                 msg "Zone '$_domain' created."
             else 
+                msg "$_response"
                 die "Zone '$_domain' creation failed."
             fi 
         }
@@ -130,8 +137,67 @@ start() {
             declare -r _domain="${1}"
             declare -r _parentDomain="${2:-$parentDomain}" # Use domain defined in config as default if not provided as argument.
             declare -r _zoneID=$(get_zoneId "$_domain")
-            declare _success
 
+            declare _response
+            declare _success
+            
+            # Use full SSL
+            _response=$(curl --silent -X PATCH "https://api.cloudflare.com/client/v4/zones/$_zoneID/settings/ssl" \
+                -H "X-Auth-Email: $authEmail" \
+                -H "X-Auth-Key: $authKey" \
+                -H "Content-Type: application/json" \
+                --data '{"value":"full"}')
+            _success=$(echo "$_response" | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find success status from json response
+
+            if [ "$_success" == true ]; then
+                msg "Success. Set full SSL."
+            else 
+                msg "Error. Did not set full SSL. " "$_response"
+            fi 
+
+            # Always use HTTPS
+            _response=$(curl --silent -X PATCH "https://api.cloudflare.com/client/v4/zones/$_zoneID/settings/always_use_https"\
+                -H "X-Auth-Email: $authEmail"\
+                -H "X-Auth-Key: $authKey"\
+                -H "Content-Type: application/json"\
+                --data '{"value":"on"}')
+            _success=$(echo "$_response" | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find success status from json response
+
+            if [ "$_success" == true ]; then
+                msg "Success. Set always HTTPS."
+            else 
+                msg "Error. Did not set always HTTPS. " "$_response"
+            fi 
+
+            # Enable Brotli compression
+            _response=$(curl --silent -X PATCH "https://api.cloudflare.com/client/v4/zones/$_zoneID/settings/brotli" \
+                -H "X-Auth-Email: $authEmail"\
+                -H "X-Auth-Key: $authKey"\
+                -H "Content-Type: application/json"\
+                --data '{"value":"on"}')
+            _success=$(echo "$_response" | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find success status from json response
+
+            if [ "$_success" == true ]; then
+                msg "Success. Set Brotli compression."
+            else 
+                msg "Error. Did not set Brotli compression. " "$_response"
+            fi 
+
+            # Point domain to parent domain via CNAME flattening, if specified.
+            if [ -n "$_parentDomain" ]; then
+                _response=$(curl --silent -X POST "https://api.cloudflare.com/client/v4/zones/$_zoneID/dns_records"\
+                    -H "X-Auth-Email: $authEmail"\
+                    -H "X-Auth-Key: $authKey"\
+                    -H "Content-Type: application/json"\
+                    --data "{\"type\":\"CNAME\",\"name\":\"@\",\"content\":\"$_parentDomain\",\"ttl\":120,\"proxied\":true}")
+                _success=$(echo "$_response" | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find success status from json response
+
+                if [ "$_success" == true ]; then
+                    msg "Success. Zone '$_domain' contains CNAME pointing to '$_parentDomain'."
+                else 
+                    msg "Error. Could not create CNAME on '$_domain' pointing to '$_parentDomain'. " "$_response"
+                fi 
+            fi
             #Note: Below automatic Wordpress platform optimization requires cloudfare paid subscription and cloudfare plugin
             # curl -X PATCH "https://api.cloudflare.com/client/v4/zones/$zoneID/settings/automatic_platform_optimization" \
             #     -H "X-Auth-Email: $authEmail" \
@@ -139,63 +205,6 @@ start() {
             #     -H "Content-Type: application/json" \
             #     --data "{\"value\":{\"enabled\":true,\"cf\":true,\"wordpress\":true,\"wp_plugin\":false,\"hostnames\":[\"www.$1\",\"$1],\"cache_by_device_type\":false}}"
             
-            # Use full SSL
-            _success=$(curl --silent -X PATCH "https://api.cloudflare.com/client/v4/zones/$_zoneID/settings/ssl" \
-                -H "X-Auth-Email: $authEmail" \
-                -H "X-Auth-Key: $authKey" \
-                -H "Content-Type: application/json" \
-                --data '{"value":"full"}' \
-                | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find success status from json response
-
-            if [ "$_success" == true ]; then
-                msg "Success. Set full SSL."
-            else 
-                msg "Error. Did not set full SSL."
-            fi 
-
-            # Always use HTTPS
-            _success=$(curl --silent -X PATCH "https://api.cloudflare.com/client/v4/zones/$_zoneID/settings/always_use_https"\
-                -H "X-Auth-Email: $authEmail"\
-                -H "X-Auth-Key: $authKey"\
-                -H "Content-Type: application/json"\
-                --data '{"value":"on"}' \
-                | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find success status from json response
-
-            if [ "$_success" == true ]; then
-                msg "Success. Set always HTTPS."
-            else 
-                msg "Error. Did not set always HTTPS."
-            fi 
-
-            # Enable Brotli compression
-            _success=$(curl --silent -X PATCH "https://api.cloudflare.com/client/v4/zones/$_zoneID/settings/brotli" \
-                -H "X-Auth-Email: $authEmail"\
-                -H "X-Auth-Key: $authKey"\
-                -H "Content-Type: application/json"\
-                --data '{"value":"on"}' \
-                | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find success status from json response
-
-            if [ "$_success" == true ]; then
-                msg "Success. Set Brotli compression."
-            else 
-                msg "Error. Did not set Brotli compression."
-            fi 
-
-            # Point domain to parent domain via CNAME flattening, if specified.
-            if [ -n "$_parentDomain" ]; then
-                _success=$(curl --silent -X POST "https://api.cloudflare.com/client/v4/zones/$_zoneID/dns_records"\
-                    -H "X-Auth-Email: $authEmail"\
-                    -H "X-Auth-Key: $authKey"\
-                    -H "Content-Type: application/json"\
-                    --data "{\"type\":\"CNAME\",\"name\":\"@\",\"content\":\"$_parentDomain\",\"ttl\":120,\"proxied\":true}" \
-                    | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find success status from json response
-
-                if [ "$_success" == true ]; then
-                    msg "Success. Zone '$_domain' contains CNAME pointing to '$_parentDomain'."
-                else 
-                    msg "Error. Could not create CNAME on '$_domain' pointing to '$_parentDomain'."
-                fi 
-            fi
         }
 
         #~~~~ A La Carte functions ~~~~#
@@ -205,18 +214,21 @@ start() {
             # Example: `on_devmode "example.com"`
             declare -r _domain="${1}"
             declare -r _zoneID=$(get_zoneId "$_domain")
+            
+            declare _response
             declare _success
 
-            _success=$(curl --silent -X PATCH "https://api.cloudflare.com/client/v4/zones/$_zoneID/settings/development_mode" \
+            _response=$(curl --silent -X PATCH "https://api.cloudflare.com/client/v4/zones/$_zoneID/settings/development_mode" \
                 -H "X-Auth-Email: $authEmail" \
                 -H "X-Auth-Key: $authKey" \
                 -H "Content-Type: application/json" \
-                --data '{"value":"on"}' \
-                | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find success status from json response
+                --data '{"value":"on"}')
+            _success=$(echo "$_response" | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find success status from json response
 
             if [ "$_success" == true ]; then
                 msg "Dev Mode is ON for '$_domain'."
             else 
+                msg "$_response"
                 die "Could not turn Dev Mode on."
             fi 
         }
@@ -226,18 +238,21 @@ start() {
             # Example: `off_devmode "example.com"`
             declare -r _domain="${1}"
             declare -r _zoneID=$(get_zoneId "$_domain")
+            
+            declare _response
             declare _success
 
-            _success=$(curl --silent -X PATCH "https://api.cloudflare.com/client/v4/zones/$_zoneID/settings/development_mode" \
+            _response=$(curl --silent -X PATCH "https://api.cloudflare.com/client/v4/zones/$_zoneID/settings/development_mode" \
             -H "X-Auth-Email: $authEmail" \
             -H "X-Auth-Key: $authKey" \
             -H "Content-Type: application/json" \
-            --data '{"value":"off"}' \
-            | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find success status from json response
+            --data '{"value":"off"}')
+            _success=$(echo "$_response" | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find success status from json response
 
             if [ "$_success" == true ]; then
                 msg "Dev Mode is OFF for '$_domain'."
             else 
+                msg "$_response"
                 die "Could not turn Dev Mode off."
             fi 
         }
@@ -247,17 +262,20 @@ start() {
             # Arg 1: Domain name
             declare -r _domain="${1}"
             declare -r _zoneID=$(get_zoneId "$_domain")
+
+            declare _response
             declare _success
 
-            _success=$(curl --silent -X DELETE "https://api.cloudflare.com/client/v4/zones/$_zoneID"\
+            _response=$(curl --silent -X DELETE "https://api.cloudflare.com/client/v4/zones/$_zoneID"\
                 -H "X-Auth-Email: $authEmail"\
                 -H "X-Auth-Key: $authKey"\
-                -H "Content-Type: application/json" \
-                | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find success status from json response
+                -H "Content-Type: application/json")
+            _success=$(echo "$_response" | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find success status from json response
 
             if [ "$_success" == true ]; then
                 msg "Zone '$_domain' deleted."
             else 
+                msg "$_response"
                 die "Zone '$_domain' not deleted."
             fi 
         }
@@ -267,4 +285,4 @@ start() {
     printf '\n\n%s\n\n' "---$(date)---" >>"$LOG"
     body "$@" |& tee -a "$LOG" # pass arguments to functions and stream console to log; NOTE: do not use 'tee' with 'select' menus!
 }
-start "$@" # pass arguments called during script source to body
+start "$@"
