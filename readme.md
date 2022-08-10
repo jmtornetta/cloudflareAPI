@@ -1,5 +1,5 @@
 # About
-A library of functions which use Cloudflare's API to speed up DNS onboarding and management. Create zones, set DNS records, and edit properties from your terminal or program.  
+A library of Linux-native functions which use Cloudflare's API to speed up DNS onboarding and management. Create zones, set DNS records, and edit properties from your terminal or program.  
 # Instructions
 1. Copy "api.default.config" to "api.config"  
 2. Add credentials from Cloudflare's API to "api.config" and save. Acquire from "https://dash.cloudflare.com/profile/api-tokens".
