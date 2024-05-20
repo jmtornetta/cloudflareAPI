@@ -40,24 +40,133 @@ start() {
         declare -r parentDomain=$(grep --perl-regexp --only-matching '"Parent Domain":\s*?"\K[^"\s]*' "$DIR/api.config")
         # declare -rx parentDNSEnable=$(grep --perl-regexp --only-matching '"Parent DNS Enabled":\s*?"\K[^"\s]*' "$DIR/api.config")
 
+        #~~~ Main fetch function ~~~~#
+        function fetch_cloudflare {
+            # About: Fetches data from Cloudflare API. Used to compose other functions. Handles pagination.
+            declare -r _endpoint="${1}"
+            declare -r _httpMethod="${2:-GET}"
+            declare -r _data="${3:-}"
+
+            declare -r _url="https://api.cloudflare.com/client/v4/$_endpoint"
+            declare -r _dataParam="${_data:+-d "$_data"}"
+            declare _response
+            declare _totalPages
+            declare _result
+
+            _response=$(curl --silent -X $_httpMethod "$_url" \
+                -H "X-Auth-Email: $authEmail" \
+                -H "X-Auth-Key: $authKey" \
+                -H "Content-Type: application/json" \
+                $_dataParam)
+            [ -z "$_response" ] && die "No response received."
+            declare _success=$(echo "$_response" | jq -r '.success')
+            [ "$_success" == true ] || die "Response not successful. Response:" "$_response"
+
+            _totalPages=$(echo "$_response" | jq -r '.result_info.total_pages')
+            _result=$(echo "$_response" | jq -r '.result[]')
+            
+            if [ $_totalPages -gt 1 ]; then
+                msg "$_totalPages pages of results. Fetching remaining..."
+                for i in $(seq 2 $_totalPages); do
+                    # if endpoint contains a query string, append page number to it
+                    declare _newUrl=$(echo "$_url" | grep -q '?' && echo "$_url&page=$i" || echo "$_url?page=$i")
+                    _response=$(curl --silent -X $_httpMethod "$_newUrl" \
+                        -H "X-Auth-Email: $authEmail" \
+                        -H "X-Auth-Key: $authKey" \
+                        -H "Content-Type: application/json")
+                    _result+="$(echo "$_response" | jq -r '.result[]')"
+                done
+            fi
+            msg "Results:" "$_result"
+            echo "$_result" # returns the response to standard output for other functions & scripts
+        }
+
         #~~~ Guard clauses ~~~~#
         [ -z "$_command" ] && die "Must provide function to call as first argument of script."
 
         #~~~ Modules ~~~~#
+        function check_record {
+            # About: Loop through each domain and check if a CNAME record exists with the required value ("kinstavalidation.app"). If not, create it.
+            declare -r _domainOrZoneId="${1}"
+            declare -r _recordName="${2}"
+            declare -r _recordValue="${3}"
+            declare _recordType="${4:-}"
+
+            declare _zoneID
+            if [[ "$_domainOrZoneId" =~ \. ]]; then
+                _zoneID=$(get_zoneId "$_domainOrZoneId")
+            else
+                _zoneID="$_domainOrZoneId"
+            fi
+
+            declare _cnameCurrentValue
+            declare _dnsRecords
+
+            _dnsRecords=$(fetch_cloudflare "zones/$_zoneID/dns_records")
+            # find "zone_name" in response to get domain name for output; only keep the first value found
+            _domainFromFirstRecord=$(echo "$_dnsRecords" | jq -r '.zone_name' | head -n 1)
+            _recordCurrentValue=$(echo "$_dnsRecords" | jq -r --arg recordName "$_recordName" 'select(.name | startswith($recordName)) | .content')
+            [ -z "$_domainFromFirstRecord" ] && die "No records found for zone ID '$_zoneID'."
+
+            echo
+            msg '%s\n' "Domain: '$_domainFromFirstRecord" "Name: '$_recordName'" "Value: '$_recordCurrentValue'"
+            echo
+            if [ -n "$_recordCurrentValue" ]; then
+                msg '%s\n' "Record exists." "Current value: $_recordCurrentValue" "Expected value: $_recordValue"
+                # if current value is not the required value, ask user if they want to update it
+                if [ "$_recordCurrentValue" == "$_recordValue" ]; then
+                    msg "Record is correct. No action needed."
+                else
+                    msg '\n%s\t' "Delete all similar records and create new [y/N]?" && read -r _deleteRecord
+                    if [ "$_deleteRecord" == "y" ]; then
+                        if [ -z "$_recordType" ]; then
+                            msg '\n%s\t' "Enter new record type [A/CNAME/TXT...]:" && read -r _recordType
+                        fi
+                        _recordIDs=$(echo "$_dnsRecords" | jq -r --arg recordName "$_recordName" 'select(.name | startswith($recordName)) | .id')
+                        for _recordID in $_recordIDs; do
+                            _dnsRecords=$(fetch_cloudflare "zones/$_zoneID/dns_records/$_recordID" "DELETE") && msg "Record deleted. ID: $_recordID"
+                        done
+                        create_zone_record "$_zoneID" "$_recordType" "$_recordName" "$_recordValue" "false"
+                    else
+                        msg "Record not deleted."
+                    fi
+                fi
+            else
+                msg '\n%s\t' "Record does not exist. Create it [y/N]?" && read -r _createRecord
+                if [ "$_createRecord" == "y" ]; then
+                    if [ -z "$_recordType" ]; then
+                        msg '\n%s\t' "Enter record type [A/CNAME/TXT...]:" && read -r _recordType
+                    fi
+                    create_zone_record "$_zoneID" "$_recordType" "$_recordName" "$_recordValue" "false"
+                else
+                    msg "Record not created."
+                fi
+            fi
+        }
+        function check_all_acme_cnames {
+            # About: Loop through each domain and check if a CNAME record exists with the required value ("kinstavalidation.app"). If not, create it.
+            declare -r _cnameName="_acme-challenge"
+            declare -r _cnameValue="kinstavalidation.app"
+
+            declare _result
+            declare _domainEntry
+            declare _zoneID
+
+            _result=$(get_all_zones)
+            # loop over each domain but don't skip user input read lines
+            for _domainEntry in $_result; do
+                IFS='|' read -r _domain _zoneID <<<"$_domainEntry"
+                check_record "$_zoneID" "$_cnameName" "$_domain.$_cnameValue" "CNAME"
+            done
+        }
         function get_zoneId {
             # About: Finds the domain ID for a domain name.
-            # Arg 1: Domain name.
             declare -r _domain="${1}"
             declare _zoneId
             set +e # So error message can be returned if _zoneId returns null
-
-            _zoneId=$(curl --silent -X GET "https://api.cloudflare.com/client/v4/zones?name=$_domain&account.id=$accountID" \
-                -H "X-Auth-Email: $authEmail" \
-                -H "X-Auth-Key: $authKey" \
-                -H "Content-Type: application/json" \
-                | grep --perl-regexp --only-matching '(?<="id":")[^"]*' | head -1) # pipe data to grep to find the id of the zone
-    
+            _zoneId=$(fetch_cloudflare "zones?name=$_domain&account.id=$accountID" | jq -r '.[0].id')
             [ -z "$_zoneId" ] && die "Could not find zone ID for '$_domain' in account."
+            set -e
             echo "$_zoneId" # returns the zone ID to standard output for other functions & scripts
         }
         function onboard_zone {
@@ -77,57 +186,6 @@ start() {
             
             msg "Onboarding for '$_domain' finished."
         }
-        #~~~~ Functions for 'onboard_zone' ~~~~$
-        function create_subdomain {
-            # About: Create a CNAME for subdomain on a parent domain.
-            # Arg 1: Sub-domain (example.com).
-            # [Arg 2]: Parent domain. Defaults to config file.
-
-            declare -r _subdomainName="${1//./}" # Removes '.' from domain name.
-            declare -r _parentDomain="${2:-$parentDomain}" # Use domain defined in config as default if not provided as argument.
-            declare -r _zoneID=$(get_zoneId "$_parentDomain") # Runs above function and assigns parent zone ID to new internal variable.
-            
-            declare _response
-            declare _success
-
-            _response=$(curl --silent -X POST "https://api.cloudflare.com/client/v4/zones/$_zoneID/dns_records" \
-                -H "X-Auth-Email: $authEmail" \
-                -H "X-Auth-Key: $authKey" \
-                -H "Content-Type: application/json" \
-                --data "{\"type\":\"CNAME\",\"name\":\"$_subdomainName\",\"content\":\"$_parentDomain\",\"ttl\":120,\"proxied\":true}")
-            _success=$(echo "$_response" | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find success status from json response
-
-            if [ "$_success" == true ]; then
-                msg "Parent zone '$_parentDomain' contains CNAME '$_subdomainName'."
-            else 
-                msg "$_response"
-                die "Subdomain creation failed."
-            fi 
-        }
-        function create_zone {
-            # About: Creates a new domain zone.
-            # Arg 1: Domain name.
-            # Example: "create_zone example.com" creates example.com
-            
-            declare -r _domain="${1}"
-
-            declare _response
-            declare _success
-            
-            _response=$(curl --silent -X POST "https://api.cloudflare.com/client/v4/zones" \
-                -H "X-Auth-Email: $authEmail" \
-                -H "X-Auth-Key: $authKey" \
-                -H "Content-Type: application/json" \
-                --data "{\"name\":\"$_domain\",\"account\":{\"id\":\"$accountID\"},\"jump_start\":true,\"type\":\"full\"}")
-            _success=$(echo "$_response" | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find success status from json response
-
-            if [ "$_success" == true ]; then
-                msg "Zone '$_domain' created."
-            else 
-                msg "$_response"
-                die "Zone '$_domain' creation failed."
-            fi 
-        }
         function set_zone {
             # About: Configures a zone with best practices, like always use HTTPS.
             # Arg 1: Domain name
@@ -137,67 +195,24 @@ start() {
             declare -r _domain="${1}"
             declare -r _parentDomain="${2:-$parentDomain}" # Use domain defined in config as default if not provided as argument.
             declare -r _zoneID=$(get_zoneId "$_domain")
-
-            declare _response
-            declare _success
+            
+            declare _result
             
             # Use full SSL
-            _response=$(curl --silent -X PATCH "https://api.cloudflare.com/client/v4/zones/$_zoneID/settings/ssl" \
-                -H "X-Auth-Email: $authEmail" \
-                -H "X-Auth-Key: $authKey" \
-                -H "Content-Type: application/json" \
-                --data '{"value":"full"}')
-            _success=$(echo "$_response" | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find success status from json response
-
-            if [ "$_success" == true ]; then
-                msg "Success. Set full SSL."
-            else 
-                msg "Error. Did not set full SSL. " "$_response"
-            fi 
+            _result=$(fetch_cloudflare "zones/$_zoneID/settings/ssl" "PATCH" '{"value":"full"}')
+            [ -n "$_result" ] && msg "Success. Set full SSL." || die "Error. Did not set full SSL."
 
             # Always use HTTPS
-            _response=$(curl --silent -X PATCH "https://api.cloudflare.com/client/v4/zones/$_zoneID/settings/always_use_https"\
-                -H "X-Auth-Email: $authEmail"\
-                -H "X-Auth-Key: $authKey"\
-                -H "Content-Type: application/json"\
-                --data '{"value":"on"}')
-            _success=$(echo "$_response" | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find success status from json response
-
-            if [ "$_success" == true ]; then
-                msg "Success. Set always HTTPS."
-            else 
-                msg "Error. Did not set always HTTPS. " "$_response"
-            fi 
+            _result=$(fetch_cloudflare "zones/$_zoneID/settings/always_use_https" "PATCH" '{"value":"on"}')
+            [ -n "$_result" ] && msg "Success. Set always HTTPS." || die "Error. Did not set always HTTPS."
 
             # Enable Brotli compression
-            _response=$(curl --silent -X PATCH "https://api.cloudflare.com/client/v4/zones/$_zoneID/settings/brotli" \
-                -H "X-Auth-Email: $authEmail"\
-                -H "X-Auth-Key: $authKey"\
-                -H "Content-Type: application/json"\
-                --data '{"value":"on"}')
-            _success=$(echo "$_response" | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find success status from json response
-
-            if [ "$_success" == true ]; then
-                msg "Success. Set Brotli compression."
-            else 
-                msg "Error. Did not set Brotli compression. " "$_response"
-            fi 
+            _result=$(fetch_cloudflare "zones/$_zoneID/settings/brotli" "PATCH" '{"value":"on"}')
+            [ -n "$_result" ] && msg "Success. Set Brotli compression." || die "Error. Did not set Brotli compression."
 
             # Point domain to parent domain via CNAME flattening, if specified.
-            if [ -n "$_parentDomain" ]; then
-                _response=$(curl --silent -X POST "https://api.cloudflare.com/client/v4/zones/$_zoneID/dns_records"\
-                    -H "X-Auth-Email: $authEmail"\
-                    -H "X-Auth-Key: $authKey"\
-                    -H "Content-Type: application/json"\
-                    --data "{\"type\":\"CNAME\",\"name\":\"@\",\"content\":\"$_parentDomain\",\"ttl\":120,\"proxied\":true}")
-                _success=$(echo "$_response" | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find success status from json response
-
-                if [ "$_success" == true ]; then
-                    msg "Success. Zone '$_domain' contains CNAME pointing to '$_parentDomain'."
-                else 
-                    msg "Error. Could not create CNAME on '$_domain' pointing to '$_parentDomain'. " "$_response"
-                fi 
-            fi
+            [ -n "$_parentDomain" ] && create_zone_record "$_zoneID" "CNAME" "@" "$_parentDomain" "true"
+            
             #Note: Below automatic Wordpress platform optimization requires cloudfare paid subscription and cloudfare plugin
             # curl -X PATCH "https://api.cloudflare.com/client/v4/zones/$zoneID/settings/automatic_platform_optimization" \
             #     -H "X-Auth-Email: $authEmail" \
@@ -205,6 +220,51 @@ start() {
             #     -H "Content-Type: application/json" \
             #     --data "{\"value\":{\"enabled\":true,\"cf\":true,\"wordpress\":true,\"wp_plugin\":false,\"hostnames\":[\"www.$1\",\"$1],\"cache_by_device_type\":false}}"
             
+        }
+        #~~~~ Functions~~~~$
+        function get_all_zones {
+            # About: Fetches all zones in a Cloudflare account.
+            declare _response
+            declare _zones
+
+            _response=$(fetch_cloudflare "zones?account.id=$accountID")
+            _zones=$(echo "$_response" | jq -r '"\(.name)|\(.id)"')
+
+            echo "$_zones" # returns the zone names and IDs to standard output for other functions & scripts
+        }
+        function create_subdomain {
+            # About: Create a CNAME for subdomain on a parent domain.
+            # Arg 1: Sub-domain (example.com).
+            # [Arg 2]: Parent domain. Defaults to config file.
+
+            declare -r _subdomainName="${1//./}" # Removes '.' from domain name.
+            declare -r _parentDomain="${2:-$parentDomain}" # Use domain defined in config as default if not provided as argument.
+            declare -r _zoneID=$(get_zoneId "$_parentDomain") # Runs above function and assigns parent zone ID to new internal variable.
+            
+            declare _result
+
+            _result=$(fetch_cloudflare "zones/$_zoneID/dns_records" "POST" "{\"type\":\"CNAME\",\"name\":\"$_subdomainName\",\"content\":\"$_parentDomain\",\"ttl\":120,\"proxied\":true}")
+            [ -n "$_result" ] && msg "Subdomain created. Name: $_subdomainName, Value: $_parentDomain" || die "Subdomain creation failed."
+        }
+        function create_zone {
+            # About: Creates a new domain zone.
+            declare -r _domain="${1}"
+            declare _result
+            
+            _result=$(fetch_cloudflare "zones" "POST" "{\"name\":\"$_domain\",\"account\":{\"id\":\"$accountID\"},\"jump_start\":true,\"type\":\"full\"}")
+            [ -n "$_result" ] && msg "Zone '$_domain' created." || die "Zone '$_domain' creation failed."
+        }
+        function create_zone_record {
+            # About: Creates a new DNS record in a zone.
+            declare -r zoneID="${1}"
+            declare -r recordType="${2}"
+            declare -r recordName="${3}"
+            declare -r recordValue="${4}"
+            declare -r proxied="${5}" # true or false
+
+            declare _result
+            _result=$(fetch_cloudflare "zones/$zoneID/dns_records" "POST" "{\"type\":\"$recordType\",\"name\":\"$recordName\",\"content\":\"$recordValue\",\"proxied\":$proxied}")
+            [ -n "$_result" ] && msg "Record created. Name: $recordName, Value: $recordValue" || die "Record creation failed."
         }
 
         #~~~~ A La Carte functions ~~~~#
@@ -215,46 +275,20 @@ start() {
             declare -r _domain="${1}"
             declare -r _zoneID=$(get_zoneId "$_domain")
             
-            declare _response
-            declare _success
+            declare _result
 
-            _response=$(curl --silent -X PATCH "https://api.cloudflare.com/client/v4/zones/$_zoneID/settings/development_mode" \
-                -H "X-Auth-Email: $authEmail" \
-                -H "X-Auth-Key: $authKey" \
-                -H "Content-Type: application/json" \
-                --data '{"value":"on"}')
-            _success=$(echo "$_response" | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find success status from json response
-
-            if [ "$_success" == true ]; then
-                msg "Dev Mode is ON for '$_domain'."
-            else 
-                msg "$_response"
-                die "Could not turn Dev Mode on."
-            fi 
+            _result=$(fetch_cloudflare "zones/$_zoneID/settings/development_mode" "PATCH" '{"value":"on"}')
+            [ -n "$_result" ] && msg "Dev Mode is ON for '$_domain'." || die "Could not turn Dev Mode on."
         }
         function off_devmode {
-            # About: Turns dev mode off manually.
-            # Arg 1: Domain name
-            # Example: `off_devmode "example.com"`
+            # About: Turns dev mode off manually. Automatically turns off after 3 hours.
             declare -r _domain="${1}"
             declare -r _zoneID=$(get_zoneId "$_domain")
             
-            declare _response
-            declare _success
+            declare _result
 
-            _response=$(curl --silent -X PATCH "https://api.cloudflare.com/client/v4/zones/$_zoneID/settings/development_mode" \
-            -H "X-Auth-Email: $authEmail" \
-            -H "X-Auth-Key: $authKey" \
-            -H "Content-Type: application/json" \
-            --data '{"value":"off"}')
-            _success=$(echo "$_response" | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find success status from json response
-
-            if [ "$_success" == true ]; then
-                msg "Dev Mode is OFF for '$_domain'."
-            else 
-                msg "$_response"
-                die "Could not turn Dev Mode off."
-            fi 
+            _result=$(fetch_cloudflare "zones/$_zoneID/settings/development_mode" "PATCH" '{"value":"off"}')
+            [ -n "$_result" ] && msg "Dev Mode is OFF for '$_domain'." || die "Could not turn Dev Mode off."
         }
         ## delete_zone deletes the specified zone. Example: "delete_zone example.com"
         function delete_zone {
@@ -263,21 +297,9 @@ start() {
             declare -r _domain="${1}"
             declare -r _zoneID=$(get_zoneId "$_domain")
 
-            declare _response
-            declare _success
-
-            _response=$(curl --silent -X DELETE "https://api.cloudflare.com/client/v4/zones/$_zoneID"\
-                -H "X-Auth-Email: $authEmail"\
-                -H "X-Auth-Key: $authKey"\
-                -H "Content-Type: application/json")
-            _success=$(echo "$_response" | grep --perl-regexp --only-matching '(?<="success":)[^,]*') # pipe data to grep to find success status from json response
-
-            if [ "$_success" == true ]; then
-                msg "Zone '$_domain' deleted."
-            else 
-                msg "$_response"
-                die "Zone '$_domain' not deleted."
-            fi 
+            declare _result
+            _result=$(fetch_cloudflare "zones/$_zoneID" "DELETE")
+            [ -n "$_result" ] && msg "Zone '$_domain' deleted." || die "Zone '$_domain' not deleted."
         }
         "$_command" "$@" # run whatever function is called when script is invoked
         #~~~ END SCRIPT ~~~#
