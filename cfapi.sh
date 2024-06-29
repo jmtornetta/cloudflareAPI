@@ -40,6 +40,11 @@ start() {
         declare -r parentDomain=$(grep --perl-regexp --only-matching '"Parent Domain":\s*?"\K[^"\s]*' "$DIR/api.config")
         # declare -rx parentDNSEnable=$(grep --perl-regexp --only-matching '"Parent DNS Enabled":\s*?"\K[^"\s]*' "$DIR/api.config")
 
+        # ensure jq is installed
+        if ! command -v jq &>/dev/null; then
+            die "jq is required to run this script. Install it with 'brew install jq' or 'sudo apt-get install jq'."
+        fi
+
         #~~~ Main fetch function ~~~~#
         function fetch_cloudflare {
             # About: Fetches data from Cloudflare API. Used to compose other functions. Handles pagination.
@@ -60,8 +65,8 @@ start() {
                 $_dataParam)
             [ -z "$_response" ] && die "No response received."
             declare _success=$(echo "$_response" | jq -r '.success')
-            [ "$_success" == true ] || die "Response not successful. Response:" "$_response"
-
+            [ "$_success" == true ] || die "Response not successful. Response: $_response"
+            msg "response: $_response"
             _totalPages=$(echo "$_response" | jq -r '.result_info.total_pages')
             _result=$(echo "$_response" | jq -r '.result[]')
             
@@ -164,7 +169,7 @@ start() {
             declare -r _domain="${1}"
             declare _zoneId
             set +e # So error message can be returned if _zoneId returns null
-            _zoneId=$(fetch_cloudflare "zones?name=$_domain&account.id=$accountID" | jq -r '.[0].id')
+            _zoneId=$(fetch_cloudflare "zones?name=$_domain&account.id=$accountID" | jq -r '.id')
             [ -z "$_zoneId" ] && die "Could not find zone ID for '$_domain' in account."
             set -e
             echo "$_zoneId" # returns the zone ID to standard output for other functions & scripts
@@ -261,13 +266,36 @@ start() {
             declare -r recordName="${3}"
             declare -r recordValue="${4}"
             declare -r proxied="${5}" # true or false
+            declare -r priority="${6}" # default priority value
 
+            declare priorityParam
+            if [[ "$recordType" == "MX"  ]]; then
+                if [[ -z "$priority" ]]; then
+                    msg '\n%s\t' "Enter priority value for MX record:" && read -r priority
+                fi
+                priorityParam="${priority:+,\"priority\":$priority}"
+            fi
             declare _result
-            _result=$(fetch_cloudflare "zones/$zoneID/dns_records" "POST" "{\"type\":\"$recordType\",\"name\":\"$recordName\",\"content\":\"$recordValue\",\"proxied\":$proxied}")
+            _result=$(fetch_cloudflare "zones/$zoneID/dns_records" "POST" "{\"type\":\"$recordType\",\"name\":\"$recordName\",\"content\":\"$recordValue\",\"proxied\":$proxied$priorityParam}")
             [ -n "$_result" ] && msg "Record created. Name: $recordName, Value: $recordValue" || die "Record creation failed."
         }
 
         #~~~~ A La Carte functions ~~~~#
+        function add_google_mx_records {
+            declare -r _domainOrZoneId="${1}"
+            declare _zoneID
+            if [[ "$_domainOrZoneId" =~ \. ]]; then
+                _zoneID=$(get_zoneId "$_domainOrZoneId")
+            else
+                _zoneID="$_domainOrZoneId"
+            fi
+
+            create_zone_record "$_zoneID" "MX" "@" "aspmx.l.google.com" "false" "1"
+            create_zone_record "$_zoneID" "MX" "@" "alt1.aspmx.l.google.com" "false" "5"
+            create_zone_record "$_zoneID" "MX" "@" "alt2.aspmx.l.google.com" "false" "5"
+            create_zone_record "$_zoneID" "MX" "@" "alt3.aspmx.l.google.com" "false" "10"
+            create_zone_record "$_zoneID" "MX" "@" "alt4.aspmx.l.google.com" "false" "10"
+        }
         function on_devmode {
             # About: Disables the Cloudflare cache. Automatically turns off after 3 hours.
             # Arg 1: Domain name
